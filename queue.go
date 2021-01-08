@@ -1,30 +1,34 @@
 package queue
 
+import "context"
+
 type PriorityQueue interface {
 	Insert(item PriorityQueueItem)
-	Get() (item PriorityQueueItem, ok bool)
+	Get() (item PriorityQueueItem, ctx context.Context, ok bool)
 	Done(item PriorityQueueItem)
 	Len() int
-	Cancel()
+	Close()
 }
 
 type priorityQueue struct {
-	items         PriorityQueueItems
-	waiting       Set
-	inProgress    Set
-	c             Conditioner
-	cancelled     bool
-	drainOnCancel bool
+	items       PriorityQueueItems
+	waiting     Map
+	inProgress  Set
+	cancelFns   Map
+	c           Conditioner
+	closed      bool
+	drainClosed bool
 }
 
 func New() PriorityQueue {
 	return &priorityQueue{
-		items:         NewSlicePriorityQueueItems(),
-		waiting:       NewMapSet(),
-		inProgress:    NewMapSet(),
-		c:             NewCond(),
-		cancelled:     false,
-		drainOnCancel: false,
+		items:       NewSlicePriorityQueueItems(),
+		waiting:     NewSimpleMap(),
+		inProgress:  NewMapSet(),
+		cancelFns:   NewSimpleMap(),
+		c:           NewCond(),
+		closed:      false,
+		drainClosed: false,
 	}
 }
 
@@ -32,23 +36,21 @@ func (q *priorityQueue) Insert(item PriorityQueueItem) {
 	q.c.Lock()
 	defer q.c.Unlock()
 
-	if q.cancelled {
-		// Do not accept items into cancelled queue
+	if q.closed {
+		// Do not accept items into closed queue
 		return
 	}
 
 	handle := item.Handle()
 
-	if q.waiting.Has(handle) {
-		// Do not accept copies
-		return
-	}
-
 	// Place item as waiting
-	q.waiting.Insert(handle)
+	q.waiting.Insert(handle, item)
+
 	if q.inProgress.Has(handle) {
 		// In case item is already being processed it's enough to just place it into waiting,
 		// it will be prioritised when Done() is called
+		fn := q.cancelFns.Get(handle)
+		fn.(context.CancelFunc)()
 		return
 	}
 
@@ -57,22 +59,23 @@ func (q *priorityQueue) Insert(item PriorityQueueItem) {
 	q.c.Signal()
 }
 
-func (q *priorityQueue) Get() (item PriorityQueueItem, ok bool) {
+func (q *priorityQueue) Get() (item PriorityQueueItem, ctx context.Context, ok bool) {
 	q.c.Lock()
 	defer q.c.Unlock()
 
-	for (q.items.Len() == 0) && !q.cancelled {
-		// Wait for items or cancellation
+	for (q.items.Len() == 0) && !q.closed {
+		// Wait for items or being close
 		q.c.Wait()
 	}
 
 	switch {
-	case q.cancelled && q.drainOnCancel:
+	case q.closed && q.drainClosed:
 		if q.items.Len() == 0 {
-			return nil, false
+			// Queue drained
+			return nil, nil, false
 		}
-	case q.cancelled:
-		return nil, false
+	case q.closed:
+		return nil, nil, false
 	}
 
 	item = q.items.Get()
@@ -81,8 +84,10 @@ func (q *priorityQueue) Get() (item PriorityQueueItem, ok bool) {
 	// Move item from waiting to in progress
 	q.waiting.Delete(handle)
 	q.inProgress.Insert(handle)
+	c, fn := context.WithCancel(context.Background())
+	q.cancelFns.Insert(handle, fn)
 
-	return item, true
+	return item, c, true
 }
 
 func (q *priorityQueue) Done(item PriorityQueueItem) {
@@ -92,11 +97,12 @@ func (q *priorityQueue) Done(item PriorityQueueItem) {
 	handle := item.Handle()
 
 	q.inProgress.Delete(handle)
+	q.cancelFns.Delete(handle)
 
 	// In case this item is again waiting for processing (meaning it was re-added during being processed),
 	// let's prioritize it and signal for waiters to pick it up
 	if q.waiting.Has(handle) {
-		q.items.Insert(item)
+		q.items.Insert(q.waiting.Get(handle).(PriorityQueueItem))
 		q.c.Signal()
 	}
 }
@@ -107,9 +113,9 @@ func (q *priorityQueue) Len() int {
 	return q.items.Len()
 }
 
-func (q *priorityQueue) Cancel() {
+func (q *priorityQueue) Close() {
 	q.c.Lock()
 	defer q.c.Unlock()
-	q.cancelled = true
+	q.closed = true
 	q.c.Broadcast()
 }
