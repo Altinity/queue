@@ -6,6 +6,9 @@ type SlicePriorityQueueItems struct {
 	items []PriorityQueueItem
 }
 
+// Ensure implements PriorityQueueItems interface
+var _ PriorityQueueItems = NewSlicePriorityQueueItems()
+
 func NewSlicePriorityQueueItems() *SlicePriorityQueueItems {
 	return &SlicePriorityQueueItems{}
 }
@@ -22,9 +25,12 @@ func (i *SlicePriorityQueueItems) Insert(item PriorityQueueItem) {
 }
 
 func (i *SlicePriorityQueueItems) Get() (item PriorityQueueItem) {
-	item, i.items = i.items[0], i.items[1:]
-	i.order()
-	return item
+	if len(i.items) > 0 {
+		item, i.items = i.items[0], i.items[1:]
+		i.order()
+		return item
+	}
+	return nil
 }
 
 func (i *SlicePriorityQueueItems) Len() int {

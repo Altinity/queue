@@ -22,7 +22,7 @@ type priorityQueue struct {
 
 func New() PriorityQueue {
 	return &priorityQueue{
-		items:       NewSlicePriorityQueueItems(),
+		items:       NewHeapPriorityQueueItems(),
 		waiting:     NewSimpleMap(),
 		inProgress:  NewMapSet(),
 		cancelFns:   NewSimpleMap(),
