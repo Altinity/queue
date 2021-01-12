@@ -20,6 +20,7 @@ type priorityQueue struct {
 	drainClosed bool
 }
 
+// New
 func New() PriorityQueue {
 	return &priorityQueue{
 		items:       NewHeapPriorityQueueItems(),
@@ -32,6 +33,7 @@ func New() PriorityQueue {
 	}
 }
 
+// Insert
 func (q *priorityQueue) Insert(item PriorityQueueItem) {
 	q.c.Lock()
 	defer q.c.Unlock()
@@ -41,6 +43,7 @@ func (q *priorityQueue) Insert(item PriorityQueueItem) {
 		return
 	}
 
+	// All waiting/progress/cancel activities are done with the handle
 	handle := item.Handle()
 
 	// Place item as waiting
@@ -54,11 +57,12 @@ func (q *priorityQueue) Insert(item PriorityQueueItem) {
 		return
 	}
 
-	// Completely new item, let's prioritize it and signal for waiters to pick it up
+	// Completely new item, let's prioritize it and signal for waiting readers to pick it up
 	q.items.Insert(item)
 	q.c.Signal()
 }
 
+// Get
 func (q *priorityQueue) Get() (item PriorityQueueItem, ctx context.Context, ok bool) {
 	q.c.Lock()
 	defer q.c.Unlock()
@@ -71,31 +75,41 @@ func (q *priorityQueue) Get() (item PriorityQueueItem, ctx context.Context, ok b
 	switch {
 	case q.closed && q.drainClosed:
 		if q.items.Len() == 0 {
-			// Queue drained
+			// Queue is closed and drained, we are done
 			return nil, nil, false
 		}
+		// Queue is closed, but not drained yet
 	case q.closed:
+		// Queue is closed and not need to drain it
 		return nil, nil, false
 	}
 
-	item = q.items.Get()
+	if item, ok = q.items.Get(); !ok {
+		return nil, nil, false
+	}
+
+	// All waiting/progress/cancel activities are done with the handle
 	handle := item.Handle()
 
 	// Move item from waiting to in progress
 	q.waiting.Delete(handle)
 	q.inProgress.Insert(handle)
+	// Returned items is accompanied by cancellable context
 	c, fn := context.WithCancel(context.Background())
 	q.cancelFns.Insert(handle, fn)
 
 	return item, c, true
 }
 
+// Done
 func (q *priorityQueue) Done(item PriorityQueueItem) {
 	q.c.Lock()
 	defer q.c.Unlock()
 
+	// All waiting/progress/cancel activities are done with the handle
 	handle := item.Handle()
 
+	// Item is done for now, it should not be cancelled
 	q.inProgress.Delete(handle)
 	q.cancelFns.Delete(handle)
 
@@ -107,12 +121,14 @@ func (q *priorityQueue) Done(item PriorityQueueItem) {
 	}
 }
 
+// Len
 func (q *priorityQueue) Len() int {
 	q.c.Lock()
 	defer q.c.Unlock()
 	return q.items.Len()
 }
 
+// Close
 func (q *priorityQueue) Close() {
 	q.c.Lock()
 	defer q.c.Unlock()

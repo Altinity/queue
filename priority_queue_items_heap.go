@@ -23,11 +23,11 @@ func (i *HeapPriorityQueueItems) Insert(item PriorityQueueItem) {
 	heap.Push(i.items, item)
 }
 
-func (i *HeapPriorityQueueItems) Get() (item PriorityQueueItem) {
+func (i *HeapPriorityQueueItems) Get() (item PriorityQueueItem, ok bool) {
 	if i.items.Len() > 0 {
-		return heap.Pop(i.items).(PriorityQueueItem)
+		return heap.Pop(i.items).(PriorityQueueItem), true
 	}
-	return nil
+	return nil, false
 }
 
 func (i *HeapPriorityQueueItems) Len() int {
