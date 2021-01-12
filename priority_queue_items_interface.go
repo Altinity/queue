@@ -12,6 +12,8 @@ type PriorityQueueItem interface {
 type PriorityQueueItems interface {
 	// Insert inserts item into the queue
 	Insert(PriorityQueueItem)
-	Get() PriorityQueueItem
+	// Get gets item if available and reports whether item is returned successfully
+	Get() (PriorityQueueItem, bool)
+	// Len returns length of the queue
 	Len() int
 }

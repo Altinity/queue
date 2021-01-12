@@ -24,13 +24,13 @@ func (i *SlicePriorityQueueItems) Insert(item PriorityQueueItem) {
 	i.order()
 }
 
-func (i *SlicePriorityQueueItems) Get() (item PriorityQueueItem) {
+func (i *SlicePriorityQueueItems) Get() (item PriorityQueueItem, ok bool) {
 	if len(i.items) > 0 {
 		item, i.items = i.items[0], i.items[1:]
 		i.order()
-		return item
+		return item, ok
 	}
-	return nil
+	return nil, false
 }
 
 func (i *SlicePriorityQueueItems) Len() int {
