@@ -8,6 +8,7 @@ type PriorityQueue interface {
 	Done(item PriorityQueueItem)
 	Len() int
 	Close()
+	Closed() bool
 }
 
 type priorityQueue struct {
@@ -52,6 +53,8 @@ func (q *priorityQueue) Insert(item PriorityQueueItem) {
 	if q.inProgress.Has(handle) {
 		// In case item is already being processed it's enough to just place it into waiting,
 		// it will be prioritised when Done() is called
+
+		// Now ask current processor to complete/abort this task ASAP
 		fn := q.cancelFns.Get(handle)
 		fn.(context.CancelFunc)()
 		return
@@ -68,7 +71,7 @@ func (q *priorityQueue) Get() (item PriorityQueueItem, ctx context.Context, ok b
 	defer q.c.Unlock()
 
 	for (q.items.Len() == 0) && !q.closed {
-		// Wait for items or being close
+		// Wait for items to come or the queue being closed
 		q.c.Wait()
 	}
 
@@ -78,9 +81,9 @@ func (q *priorityQueue) Get() (item PriorityQueueItem, ctx context.Context, ok b
 			// Queue is closed and drained, we are done
 			return nil, nil, false
 		}
-		// Queue is closed, but not drained yet
+		// Queue is closed, but not drained yet, continue to fetch items
 	case q.closed:
-		// Queue is closed and not need to drain it
+		// Queue is closed and no need to drain it
 		return nil, nil, false
 	}
 
@@ -101,7 +104,8 @@ func (q *priorityQueue) Get() (item PriorityQueueItem, ctx context.Context, ok b
 	return item, c, true
 }
 
-// Done
+// Done informs the queue that worker has done with the item.
+// In case this item was re-inserted into the queue while being processed, it has to be prioritised again.
 func (q *priorityQueue) Done(item PriorityQueueItem) {
 	q.c.Lock()
 	defer q.c.Unlock()
@@ -133,5 +137,13 @@ func (q *priorityQueue) Close() {
 	q.c.Lock()
 	defer q.c.Unlock()
 	q.closed = true
+	// Notify all waiters to start shutdown process
 	q.c.Broadcast()
+}
+
+// Closed reports whether the queue is closed
+func (q *priorityQueue) Closed() bool {
+	q.c.Lock()
+	defer q.c.Unlock()
+	return q.closed
 }
